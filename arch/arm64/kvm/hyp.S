@@ -22,6 +22,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/debug-monitors.h>
 #include <asm/fpsimdmacros.h>
+#include <asm/pmu.h>
 #include <asm/kvm.h>
 #include <asm/kvm_asm.h>
 #include <asm/kvm_arm.h>
@@ -422,6 +423,77 @@
 	str	x21, [x2, #CPU_SYSREG_OFFSET(MDCCINT_EL1)]
 .endm
 
+.macro save_pmu, is_vcpu_pmu
+	// x2: base address for cpu context
+	// x3: mask of counters allowed in EL0 & EL1
+	// x4: number of event counters allowed in EL0 & EL1
+
+	mrs	x6, id_aa64dfr0_el1
+	ubfx	x5, x6, #8, #4		// Extract PMUver
+	cmp	x5, #1			// Must be PMUv3 else skip
+	bne	1f
+
+	mrs	x4, pmcr_el0		// Save PMCR_EL0
+	str	x4, [x2, #CPU_SYSREG_OFFSET(PMCR_EL0)]
+
+	and	x5, x4, #~(ARMV8_PMCR_E)// Clear PMCR_EL0.E
+	msr	pmcr_el0, x5		// This will stop all counters
+
+	mov	x3, #0
+	ubfx	x4, x4, #ARMV8_PMCR_N_SHIFT, #5	// Number of event counters
+	cmp	x4, #0			// Skip if no event counters
+	beq	2f
+	sub	x4, x4, #1		// Last event counter is reserved
+	mov	x3, #1
+	lsl	x3, x3, x4
+	sub	x3, x3, #1
+2:	orr	x3, x3, #(1 << 31)	// Mask of event counters
+
+	mrs	x5, pmovsset_el0	// Save PMOVSSET_EL0
+	and	x5, x5, x3
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMOVSSET_EL0)]
+
+	.if \is_vcpu_pmu == 1
+	msr	pmovsclr_el0, x5	// Clear HW interrupt line
+	msr	pmintenclr_el1, x5	// Mask irq for overflowed counters
+	str	w5, [x0, #VCPU_PMU_IRQ_PENDING] // Update irq pending flag
+	.endif
+
+	mrs	x5, pmccntr_el0		// Save PMCCNTR_EL0
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMCCNTR_EL0)]
+
+	mrs	x5, pmselr_el0		// Save PMSELR_EL0
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMSELR_EL0)]
+
+	lsl	x5, x4, #4
+	add	x5, x5, #CPU_SYSREG_OFFSET(PMEVCNTR0_EL0)
+	add	x5, x2, x5
+3:	cmp	x4, #0
+	beq	4f
+	sub	x4, x4, #1
+	msr	pmselr_el0, x4
+	mrs	x6, pmxevcntr_el0	// Save PMEVCNTR<n>_EL0
+	mrs	x7, pmxevtyper_el0	// Save PMEVTYPER<n>_EL0
+	stp	x6, x7, [x5, #-16]!
+	b	3b
+4:
+	mrs	x5, pmcntenset_el0	// Save PMCNTENSET_EL0
+	and	x5, x5, x3
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMCNTENSET_EL0)]
+
+	mrs	x5, pmintenset_el1	// Save PMINTENSET_EL1
+	and	x5, x5, x3
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMINTENSET_EL1)]
+
+	mrs	x5, pmuserenr_el0	// Save PMUSERENR_EL0
+	and	x5, x5, x3
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMUSERENR_EL0)]
+
+	mrs	x5, pmccfiltr_el0	// Save PMCCFILTR_EL0
+	str	x5, [x2, #CPU_SYSREG_OFFSET(PMCCFILTR_EL0)]
+1:
+.endm
+
 .macro restore_sysregs
 	// x2: base address for cpu context
 	// x3: tmp register
@@ -655,6 +727,72 @@
 	msr	mdccint_el1, x21
 .endm
 
+.macro restore_pmu
+	// x2: base address for cpu context
+	// x3: mask of counters allowed in EL0 & EL1
+	// x4: number of event counters allowed in EL0 & EL1
+
+	mrs	x6, id_aa64dfr0_el1
+	ubfx	x5, x6, #8, #4		// Extract PMUver
+	cmp	x5, #1			// Must be PMUv3 else skip
+	bne	1f
+
+	mov	x3, #0
+	mrs	x4, pmcr_el0
+	ubfx	x4, x4, #ARMV8_PMCR_N_SHIFT, #5	// Number of event counters
+	cmp	x4, #0			// Skip if no event counters
+	beq	2f
+	sub	x4, x4, #1		// Last event counter is reserved
+	mov	x3, #1
+	lsl	x3, x3, x4
+	sub	x3, x3, #1
+2:	orr	x3, x3, #(1 << 31)	// Mask of event counters
+
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMCCFILTR_EL0)]
+	msr	pmccfiltr_el0, x5	// Restore PMCCFILTR_EL0
+
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMUSERENR_EL0)]
+	and	x5, x5, x3
+	msr	pmuserenr_el0, x5	// Restore PMUSERENR_EL0
+
+	msr	pmintenclr_el1, x3
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMINTENSET_EL1)]
+	and	x5, x5, x3
+	msr	pmintenset_el1, x5	// Restore PMINTENSET_EL1
+
+	msr	pmcntenclr_el0, x3
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMCNTENSET_EL0)]
+	and	x5, x5, x3
+	msr	pmcntenset_el0, x5	// Restore PMCNTENSET_EL0
+
+	lsl	x5, x4, #4
+	add	x5, x5, #CPU_SYSREG_OFFSET(PMEVCNTR0_EL0)
+	add	x5, x2, x5
+3:	cmp	x4, #0
+	beq	4f
+	sub	x4, x4, #1
+	ldp	x6, x7, [x5, #-16]!
+	msr	pmselr_el0, x4
+	msr	pmxevcntr_el0, x6	// Restore PMEVCNTR<n>_EL0
+	msr	pmxevtyper_el0, x7	// Restore PMEVTYPER<n>_EL0
+	b	3b
+4:
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMSELR_EL0)]
+	msr	pmselr_el0, x5		// Restore PMSELR_EL0
+
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMCCNTR_EL0)]
+	msr	pmccntr_el0, x5		// Restore PMCCNTR_EL0
+
+	msr	pmovsclr_el0, x3
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMOVSSET_EL0)]
+	and	x5, x5, x3
+	msr	pmovsset_el0, x5	// Restore PMOVSSET_EL0
+
+	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMCR_EL0)]
+	msr	pmcr_el0, x5		// Restore PMCR_EL0
+1:
+.endm
+
 .macro skip_32bit_state tmp, target
 	// Skip 32bit state if not needed
 	mrs	\tmp, hcr_el2
@@ -768,8 +906,10 @@
 	msr	hstr_el2, x2
 
 	mrs	x2, mdcr_el2
+	and	x3, x2, #MDCR_EL2_HPME
 	and	x2, x2, #MDCR_EL2_HPMN_MASK
-	orr	x2, x2, #(MDCR_EL2_TPM | MDCR_EL2_TPMCR)
+	orr	x2, x2, x3
+	orr	x2, x2, #MDCR_EL2_TPMCR
 	orr	x2, x2, #(MDCR_EL2_TDRA | MDCR_EL2_TDOSA)
 
 	// Check for KVM_ARM64_DEBUG_DIRTY, and set debug to trap
@@ -788,7 +928,9 @@
 	msr	hstr_el2, xzr
 
 	mrs	x2, mdcr_el2
+	and	x3, x2, #MDCR_EL2_HPME
 	and	x2, x2, #MDCR_EL2_HPMN_MASK
+	orr	x2, x2, x3
 	msr	mdcr_el2, x2
 .endm
 
@@ -903,6 +1045,18 @@ __restore_debug:
 	restore_debug
 	ret
 
+__save_pmu_host:
+	save_pmu 0
+	ret
+
+__save_pmu_guest:
+	save_pmu 1
+	ret
+
+__restore_pmu:
+	restore_pmu
+	ret
+
 __save_fpsimd:
 	save_fpsimd
 	ret
@@ -931,6 +1085,9 @@ ENTRY(__kvm_vcpu_run)
 	kern_hyp_va x2
 
 	save_host_regs
+
+	bl __save_pmu_host
+
 	bl __save_fpsimd
 	bl __save_sysregs
 
@@ -953,6 +1110,9 @@ ENTRY(__kvm_vcpu_run)
 	bl	__restore_debug
 1:
 	restore_guest_32bit_state
+
+	bl __restore_pmu
+
 	restore_guest_regs
 
 	// That's it, no more messing around.
@@ -966,12 +1126,16 @@ __kvm_vcpu_return:
 	add	x2, x0, #VCPU_CONTEXT
 
 	save_guest_regs
+
+	bl __save_pmu_guest
+
 	bl __save_fpsimd
 	bl __save_sysregs
 
 	skip_debug_state x3, 1f
 	bl	__save_debug
 1:
+
 	save_guest_32bit_state
 
 	save_timer_state
@@ -994,6 +1158,8 @@ __kvm_vcpu_return:
 	str	xzr, [x0, #VCPU_DEBUG_FLAGS]
 	bl	__restore_debug
 1:
+	bl __restore_pmu
+
 	restore_host_regs
 
 	mov	x0, x1

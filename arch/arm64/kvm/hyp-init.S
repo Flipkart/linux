@@ -20,6 +20,7 @@
 #include <asm/assembler.h>
 #include <asm/kvm_arm.h>
 #include <asm/kvm_mmu.h>
+#include <asm/pmu.h>
 
 	.text
 	.pushsection	.hyp.idmap.text, "ax"
@@ -110,6 +111,20 @@ target: /* We're now in the trampoline code, switch page tables */
 	mov	sp, x2
 	kern_hyp_va	x3
 	msr	vbar_el2, x3
+
+	/* Reserve last PMU event counter for EL2 */
+	mov	x4, #0
+	mrs	x5, id_aa64dfr0_el1
+	ubfx	x5, x5, #8, #4		// Extract PMUver
+	cmp	x5, #1			// Must be PMUv3 else skip
+	bne	1f
+	mrs	x5, pmcr_el0
+	ubfx	x5, x5, #ARMV8_PMCR_N_SHIFT, #5	// Number of event counters
+	cmp	x5, #0			// Skip if no event counters
+	beq	1f
+	sub	x4, x5, #1
+1:
+	msr	mdcr_el2, x4
 
 	/* Hello, World! */
 	eret

@@ -55,15 +55,27 @@
 #define DBGWVR0_EL1	71	/* Debug Watchpoint Value Registers (0-15) */
 #define DBGWVR15_EL1	86
 #define MDCCINT_EL1	87	/* Monitor Debug Comms Channel Interrupt Enable Reg */
+#define PMCR_EL0	88	/* Performance Monitors Control Register */
+#define PMOVSSET_EL0	89	/* Performance Monitors Overflow Flag Status Set Register */
+#define PMCCNTR_EL0	90	/* Cycle Counter Register */
+#define PMSELR_EL0	91	/* Performance Monitors Event Counter Selection Register */
+#define PMEVCNTR0_EL0	92	/* Performance Monitors Event Counter Register (0-30) */
+#define PMEVTYPER0_EL0	93	/* Performance Monitors Event Type Register (0-30) */
+#define PMEVCNTR30_EL0	152
+#define PMEVTYPER30_EL0	153
+#define PMCNTENSET_EL0	154	/* Performance Monitors Count Enable Set Register */
+#define PMINTENSET_EL1	155	/* Performance Monitors Interrupt Enable Set Register */
+#define PMUSERENR_EL0	156	/* Performance Monitors User Enable Register */
+#define PMCCFILTR_EL0	157	/* Cycle Count Filter Register */
 
 /* 32bit specific registers. Keep them at the end of the range */
-#define	DACR32_EL2	88	/* Domain Access Control Register */
-#define	IFSR32_EL2	89	/* Instruction Fault Status Register */
-#define	FPEXC32_EL2	90	/* Floating-Point Exception Control Register */
-#define	DBGVCR32_EL2	91	/* Debug Vector Catch Register */
-#define	TEECR32_EL1	92	/* ThumbEE Configuration Register */
-#define	TEEHBR32_EL1	93	/* ThumbEE Handler Base Register */
-#define	NR_SYS_REGS	94
+#define	DACR32_EL2	158	/* Domain Access Control Register */
+#define	IFSR32_EL2	159	/* Instruction Fault Status Register */
+#define	FPEXC32_EL2	160	/* Floating-Point Exception Control Register */
+#define	DBGVCR32_EL2	161	/* Debug Vector Catch Register */
+#define	TEECR32_EL1	162	/* ThumbEE Configuration Register */
+#define	TEEHBR32_EL1	163	/* ThumbEE Handler Base Register */
+#define	NR_SYS_REGS	164
 
 /* 32bit mapping */
 #define c0_MPIDR	(MPIDR_EL1 * 2)	/* MultiProcessor ID Register */
@@ -85,6 +97,13 @@
 #define c6_IFAR		(c6_DFAR + 1)	/* Instruction Fault Address Register */
 #define c7_PAR		(PAR_EL1 * 2)	/* Physical Address Register */
 #define c7_PAR_high	(c7_PAR + 1)	/* PAR top 32 bits */
+#define c9_PMCR		(PMCR_EL0 * 2)	/* Performance Monitors Control Register */
+#define c9_PMOVSSET	(PMOVSSET_EL0 * 2)
+#define c9_PMCCNTR	(PMCCNTR_EL0 * 2)
+#define c9_PMSELR	(PMSELR_EL0 * 2)
+#define c9_PMCNTENSET	(PMCNTENSET_EL0 * 2)
+#define c9_PMINTENSET	(PMINTENSET_EL1 * 2)
+#define c9_PMUSERENR	(PMUSERENR_EL0 * 2)
 #define c10_PRRR	(MAIR_EL1 * 2)	/* Primary Region Remap Register */
 #define c10_NMRR	(c10_PRRR + 1)	/* Normal Memory Remap Register */
 #define c12_VBAR	(VBAR_EL1 * 2)	/* Vector Base Address Register */
@@ -95,6 +114,9 @@
 #define c10_AMAIR0	(AMAIR_EL1 * 2)	/* Aux Memory Attr Indirection Reg */
 #define c10_AMAIR1	(c10_AMAIR0 + 1)/* Aux Memory Attr Indirection Reg */
 #define c14_CNTKCTL	(CNTKCTL_EL1 * 2) /* Timer Control Register (PL1) */
+#define c14_PMEVCNTR0	(PMEVCNTR0_EL0 * 2)
+#define c14_PMEVTYPR0	(PMEVTYPER0_EL0 * 2)
+#define c14_PMCCFILTR	(PMCCFILTR_EL0 * 2)
 
 #define cp14_DBGDSCRext	(MDSCR_EL1 * 2)
 #define cp14_DBGBCR0	(DBGBCR0_EL1 * 2)
