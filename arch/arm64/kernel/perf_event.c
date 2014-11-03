@@ -1076,6 +1076,14 @@ static irqreturn_t armv8pmu_handle_irq(int irq_num, void *dev)
 		if (!armv8pmu_counter_has_overflowed(pmovsr, idx))
 			continue;
 
+		/*
+		 * If we are running under a hypervisor such as KVM then
+		 * hypervisor will mask the interrupt before forwarding
+		 * it to Guest Linux hence re-enable interrupt for the
+		 * overflowed counter.
+		 */
+		armv8pmu_enable_intens(idx);
+
 		hwc = &event->hw;
 		armpmu_event_update(event, hwc, idx);
 		perf_sample_data_init(&data, 0, hwc->last_period);
