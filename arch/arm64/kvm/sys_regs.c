@@ -167,6 +167,130 @@ static bool access_sctlr(struct kvm_vcpu *vcpu,
 	return true;
 }
 
+/* PMU reg accessor. Only called as long as MDCR_EL2.TPMCR is set. */
+static bool access_pmu_reg(struct kvm_vcpu *vcpu,
+			   const struct sys_reg_params *p,
+			   const struct sys_reg_desc *r)
+{
+	unsigned long val;
+
+	if (p->is_write) {
+		val = *vcpu_reg(vcpu, p->Rt);
+		if (!p->is_aarch32)
+			vcpu_sys_reg(vcpu, r->reg) = val;
+		else
+			vcpu_cp15(vcpu, r->reg) = val & 0xffffffffUL;
+		vcpu->arch.pmu_flags |= KVM_ARM64_PMU_DIRTY;
+	} else {
+		if (!p->is_aarch32)
+			val = vcpu_sys_reg(vcpu, r->reg);
+		else
+			val = vcpu_cp15(vcpu, r->reg);
+		*vcpu_reg(vcpu, p->Rt) = val;
+	}
+
+	return true;
+}
+
+/* PMU set reg accessor. Only called as long as MDCR_EL2.TPM is set. */
+static bool access_pmu_setreg(struct kvm_vcpu *vcpu,
+			      const struct sys_reg_params *p,
+			      const struct sys_reg_desc *r)
+{
+	unsigned long val;
+
+	if (p->is_write) {
+		val = *vcpu_reg(vcpu, p->Rt);
+		if (!p->is_aarch32)
+			vcpu_sys_reg(vcpu, r->reg) |= val;
+		else
+			vcpu_cp15(vcpu, r->reg) |= val & 0xffffffffUL;
+		vcpu->arch.pmu_flags |= KVM_ARM64_PMU_DIRTY;
+	} else {
+		if (!p->is_aarch32)
+			val = vcpu_sys_reg(vcpu, r->reg);
+		else
+			val = vcpu_cp15(vcpu, r->reg);
+		*vcpu_reg(vcpu, p->Rt) = val;
+	}
+
+	return true;
+}
+
+/* PMU clear reg accessor. Only called as long as MDCR_EL2.TPM is set. */
+static bool access_pmu_clrreg(struct kvm_vcpu *vcpu,
+			      const struct sys_reg_params *p,
+			      const struct sys_reg_desc *r)
+{
+	unsigned long val;
+
+	if (p->is_write) {
+		val = *vcpu_reg(vcpu, p->Rt);
+		if (!p->is_aarch32)
+			vcpu_sys_reg(vcpu, r->reg) &= ~val;
+		else
+			vcpu_cp15(vcpu, r->reg) &= ~(val & 0xffffffffUL);
+		vcpu->arch.pmu_flags |= KVM_ARM64_PMU_DIRTY;
+	} else {
+		if (!p->is_aarch32)
+			val = vcpu_sys_reg(vcpu, r->reg);
+		else
+			val = vcpu_cp15(vcpu, r->reg);
+		*vcpu_reg(vcpu, p->Rt) = val;
+	}
+
+	return true;
+}
+
+/* PMU extended reg accessor. Only called as long as MDCR_EL2.TPM is set. */
+static bool access_pmu_xreg(struct kvm_vcpu *vcpu,
+			    const struct sys_reg_params *p,
+			    const struct sys_reg_desc *r)
+{
+	unsigned long index, reg, val;
+
+	if (!p->is_aarch32)
+		index = vcpu_sys_reg(vcpu, PMSELR_EL0) & ARMV8_PMCR_N_MASK;
+	else
+		index = vcpu_cp15(vcpu, c9_PMSELR) & ARMV8_PMCR_N_MASK;
+
+	if (index != ARMV8_PMCR_N_MASK) {
+		if (!p->is_aarch32) {
+			if (r->reg == PMEVCNTR0_EL0)
+				reg = PMCCNTR_EL0;
+			else
+				reg = PMCCFILTR_EL0;
+		} else {
+			if (r->reg == c14_PMEVCNTR0)
+				reg = c9_PMCCNTR;
+			else
+				reg = c14_PMCCFILTR;
+		}
+	} else {
+		if (!p->is_aarch32)
+			reg = r->reg + 2*index;
+		else
+			reg = r->reg + 4*index;
+	}
+
+	if (p->is_write) {
+		val = *vcpu_reg(vcpu, p->Rt);
+		if (!p->is_aarch32)
+			vcpu_sys_reg(vcpu, reg) = val;
+		else
+			vcpu_cp15(vcpu, reg) = val & 0xffffffffUL;
+		vcpu->arch.pmu_flags |= KVM_ARM64_PMU_DIRTY;
+	} else {
+		if (!p->is_aarch32)
+			val = vcpu_sys_reg(vcpu, reg);
+		else
+			val = vcpu_cp15(vcpu, reg);
+		*vcpu_reg(vcpu, p->Rt) = val;
+	}
+
+	return true;
+}
+
 /* PMCR_EL0 accessor. Only called as long as MDCR_EL2.TPMCR is set. */
 static bool access_pmcr(struct kvm_vcpu *vcpu,
 			const struct sys_reg_params *p,
@@ -186,6 +310,7 @@ static bool access_pmcr(struct kvm_vcpu *vcpu,
 			vcpu_sys_reg(vcpu, r->reg) = val;
 		else
 			vcpu_cp15(vcpu, r->reg) = val;
+		vcpu->arch.pmu_flags |= KVM_ARM64_PMU_DIRTY;
 	} else {
 		/*
 		 * We reserve the last event counter for EL2-mode
@@ -319,14 +444,14 @@ static void reset_mpidr(struct kvm_vcpu *vcpu, const struct sys_reg_desc *r)
 	/* PMEVCNTRn_EL0 */						\
 	{ Op0(0b11), Op1(0b011), CRn(0b1110),				\
 	  CRm((0b1000 | (((n) >> 3) & 0x3))), Op2(((n) & 0x7)),		\
-	  NULL, reset_val, (PMEVCNTR0_EL0 + (n)*2), 0 }
+	  access_pmu_reg, reset_val, (PMEVCNTR0_EL0 + (n)*2), 0 }
 
 /* Macro to expand the PMEVTYPERn_EL0 register */
 #define PMU_PMEVTYPER_EL0(n)						\
 	/* PMEVTYPERn_EL0 */						\
 	{ Op0(0b11), Op1(0b011), CRn(0b1110),				\
 	  CRm((0b1100 | (((n) >> 3) & 0x3))), Op2(((n) & 0x7)),		\
-	  NULL, reset_val, (PMEVTYPER0_EL0 + (n)*2), 0 }
+	  access_pmu_reg, reset_val, (PMEVTYPER0_EL0 + (n)*2), 0 }
 
 /*
  * Architected system registers.
@@ -464,7 +589,10 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 
 	/* PMINTENSET_EL1 */
 	{ Op0(0b11), Op1(0b000), CRn(0b1001), CRm(0b1110), Op2(0b001),
-	  NULL, reset_val, PMINTENSET_EL1, 0 },
+	  access_pmu_setreg, reset_val, PMINTENSET_EL1, 0 },
+	/* PMINTENCLR_EL1 */
+	{ Op0(0b11), Op1(0b000), CRn(0b1001), CRm(0b1110), Op2(0b010),
+	  access_pmu_clrreg, reset_val, PMINTENSET_EL1, 0 },
 
 	/* MAIR_EL1 */
 	{ Op0(0b11), Op1(0b000), CRn(0b1010), CRm(0b0010), Op2(0b000),
@@ -496,19 +624,31 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	  access_pmcr, reset_val, PMCR_EL0, 0 },
 	/* PMCNTENSET_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1100), Op2(0b001),
-	  NULL, reset_val, PMCNTENSET_EL0, 0 },
+	  access_pmu_setreg, reset_val, PMCNTENSET_EL0, 0 },
+	/* PMCNTENCLR_EL0 */
+	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1100), Op2(0b010),
+	  access_pmu_clrreg, reset_val, PMCNTENSET_EL0, 0 },
+	/* PMOVSCLR_EL0 */
+	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1100), Op2(0b011),
+	  access_pmu_clrreg, reset_val, PMOVSSET_EL0, 0 },
 	/* PMSELR_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1100), Op2(0b101),
-	  NULL, reset_val, PMSELR_EL0 },
+	  access_pmu_reg, reset_val, PMSELR_EL0 },
 	/* PMCCNTR_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1101), Op2(0b000),
-	  NULL, reset_val, PMCCNTR_EL0, 0 },
+	  access_pmu_reg, reset_val, PMCCNTR_EL0, 0 },
+	/* PMXEVTYPER_EL0 */
+	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1101), Op2(0b001),
+	  access_pmu_xreg, reset_val, PMEVTYPER0_EL0, 0 },
+	/* PMXEVCNTR_EL0 */
+	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1101), Op2(0b010),
+	  access_pmu_xreg, reset_val, PMEVCNTR0_EL0, 0 },
 	/* PMUSERENR_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1110), Op2(0b000),
-	  NULL, reset_val, PMUSERENR_EL0, 0 },
+	  access_pmu_reg, reset_val, PMUSERENR_EL0, 0 },
 	/* PMOVSSET_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1001), CRm(0b1110), Op2(0b011),
-	  NULL, reset_val, PMOVSSET_EL0, 0 },
+	  access_pmu_setreg, reset_val, PMOVSSET_EL0, 0 },
 
 	/* TPIDR_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1101), CRm(0b0000), Op2(0b010),
@@ -583,7 +723,7 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	PMU_PMEVTYPER_EL0(30),
 	/* PMCCFILTR_EL0 */
 	{ Op0(0b11), Op1(0b011), CRn(0b1110), CRm(0b1111), Op2(0b111),
-	  NULL, reset_val, PMCCFILTR_EL0, 0 },
+	  access_pmu_reg, reset_val, PMCCFILTR_EL0, 0 },
 
 	/* DACR32_EL2 */
 	{ Op0(0b11), Op1(0b100), CRn(0b0011), CRm(0b0000), Op2(0b000),
@@ -745,6 +885,20 @@ static const struct sys_reg_desc cp14_64_regs[] = {
 	{ Op1( 0), CRm( 2), .access = trap_raz_wi },
 };
 
+/* Macro to expand the PMEVCNTR<n> register */
+#define PMU_PMEVCNTR(n)							\
+	/* PMEVCNTRn */							\
+	{  Op1( 0), CRn(14), 						\
+	  CRm((0b1000 | (((n) >> 3) & 0x3))), Op2(((n) & 0x7)),		\
+	  access_pmu_reg, reset_val, (c14_PMEVCNTR0 + (n)*4), 0 }
+
+/* Macro to expand the PMEVTYPER<n> register */
+#define PMU_PMEVTYPER(n)						\
+	/* PMEVTYPERn_EL0 */						\
+	{ Op1( 0), CRn(14), 						\
+	  CRm((0b1100 | (((n) >> 3) & 0x3))), Op2(((n) & 0x7)),		\
+	  access_pmu_reg, reset_val, (c14_PMEVTYPR0 + (n)*4), 0 }
+
 /*
  * Trapped cp15 registers. TTBR0/TTBR1 get a double encoding,
  * depending on the way they are accessed (as a 32bit or a 64bit
@@ -772,12 +926,88 @@ static const struct sys_reg_desc cp15_regs[] = {
 
 	/* PMU */
 	{ Op1( 0), CRn( 9), CRm(12), Op2( 0), access_pmcr, NULL, c9_PMCR },
+	{ Op1( 0), CRn( 9), CRm(12), Op2( 1), access_pmu_setreg, NULL, c9_PMCNTENSET },
+	{ Op1( 0), CRn( 9), CRm(12), Op2( 2), access_pmu_clrreg, NULL, c9_PMCNTENSET },
+	{ Op1( 0), CRn( 9), CRm(12), Op2( 3), access_pmu_clrreg, NULL, c9_PMOVSSET },
+	{ Op1( 0), CRn( 9), CRm(12), Op2( 5), access_pmu_reg, NULL, c9_PMSELR },
+	{ Op1( 0), CRn( 9), CRm(13), Op2( 0), access_pmu_reg, NULL, c9_PMCCNTR },
+	{ Op1( 0), CRn( 9), CRm(13), Op2( 1), access_pmu_xreg, NULL, c14_PMEVTYPR0 },
+	{ Op1( 0), CRn( 9), CRm(13), Op2( 2), access_pmu_xreg, NULL, c14_PMEVCNTR0 },
+	{ Op1( 0), CRn( 9), CRm(14), Op2( 0), access_pmu_reg, NULL, c9_PMUSERENR },
+	{ Op1( 0), CRn( 9), CRm(14), Op2( 1), access_pmu_setreg, NULL, c9_PMINTENSET },
+	{ Op1( 0), CRn( 9), CRm(14), Op2( 2), access_pmu_clrreg, NULL, c9_PMINTENSET },
+	{ Op1( 0), CRn( 9), CRm(14), Op2( 3), access_pmu_setreg, NULL, c9_PMOVSSET },
 
 	{ Op1( 0), CRn(10), CRm( 2), Op2( 0), access_vm_reg, NULL, c10_PRRR },
 	{ Op1( 0), CRn(10), CRm( 2), Op2( 1), access_vm_reg, NULL, c10_NMRR },
 	{ Op1( 0), CRn(10), CRm( 3), Op2( 0), access_vm_reg, NULL, c10_AMAIR0 },
 	{ Op1( 0), CRn(10), CRm( 3), Op2( 1), access_vm_reg, NULL, c10_AMAIR1 },
 	{ Op1( 0), CRn(13), CRm( 0), Op2( 1), access_vm_reg, NULL, c13_CID },
+
+	/* PMU */
+	PMU_PMEVCNTR(0),
+	PMU_PMEVCNTR(1),
+	PMU_PMEVCNTR(2),
+	PMU_PMEVCNTR(3),
+	PMU_PMEVCNTR(4),
+	PMU_PMEVCNTR(5),
+	PMU_PMEVCNTR(6),
+	PMU_PMEVCNTR(7),
+	PMU_PMEVCNTR(8),
+	PMU_PMEVCNTR(9),
+	PMU_PMEVCNTR(10),
+	PMU_PMEVCNTR(11),
+	PMU_PMEVCNTR(12),
+	PMU_PMEVCNTR(13),
+	PMU_PMEVCNTR(14),
+	PMU_PMEVCNTR(15),
+	PMU_PMEVCNTR(16),
+	PMU_PMEVCNTR(17),
+	PMU_PMEVCNTR(18),
+	PMU_PMEVCNTR(19),
+	PMU_PMEVCNTR(20),
+	PMU_PMEVCNTR(21),
+	PMU_PMEVCNTR(22),
+	PMU_PMEVCNTR(23),
+	PMU_PMEVCNTR(24),
+	PMU_PMEVCNTR(25),
+	PMU_PMEVCNTR(26),
+	PMU_PMEVCNTR(27),
+	PMU_PMEVCNTR(28),
+	PMU_PMEVCNTR(29),
+	PMU_PMEVCNTR(30),
+	PMU_PMEVTYPER(0),
+	PMU_PMEVTYPER(1),
+	PMU_PMEVTYPER(2),
+	PMU_PMEVTYPER(3),
+	PMU_PMEVTYPER(4),
+	PMU_PMEVTYPER(5),
+	PMU_PMEVTYPER(6),
+	PMU_PMEVTYPER(7),
+	PMU_PMEVTYPER(8),
+	PMU_PMEVTYPER(9),
+	PMU_PMEVTYPER(10),
+	PMU_PMEVTYPER(11),
+	PMU_PMEVTYPER(12),
+	PMU_PMEVTYPER(13),
+	PMU_PMEVTYPER(14),
+	PMU_PMEVTYPER(15),
+	PMU_PMEVTYPER(16),
+	PMU_PMEVTYPER(17),
+	PMU_PMEVTYPER(18),
+	PMU_PMEVTYPER(19),
+	PMU_PMEVTYPER(20),
+	PMU_PMEVTYPER(21),
+	PMU_PMEVTYPER(22),
+	PMU_PMEVTYPER(23),
+	PMU_PMEVTYPER(24),
+	PMU_PMEVTYPER(25),
+	PMU_PMEVTYPER(26),
+	PMU_PMEVTYPER(27),
+	PMU_PMEVTYPER(28),
+	PMU_PMEVTYPER(29),
+	PMU_PMEVTYPER(30),
+	{ Op1( 0), CRn(14), CRm(15), Op2( 7), access_pmu_reg, NULL, c14_PMCCFILTR },
 };
 
 static const struct sys_reg_desc cp15_64_regs[] = {

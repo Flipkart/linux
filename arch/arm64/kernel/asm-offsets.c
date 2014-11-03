@@ -151,6 +151,7 @@ int main(void)
   DEFINE(VGIC_CPU_NR_LR,	offsetof(struct vgic_cpu, nr_lr));
   DEFINE(KVM_VTTBR,		offsetof(struct kvm, arch.vttbr));
   DEFINE(KVM_VGIC_VCTRL,	offsetof(struct kvm, arch.vgic.vctrl_base));
+  DEFINE(VCPU_PMU_FLAGS,	offsetof(struct kvm_vcpu, arch.pmu_flags));
   DEFINE(VCPU_PMU_IRQ_PENDING,	offsetof(struct kvm_vcpu, arch.pmu_cpu.irq_pending));
 #endif
 #ifdef CONFIG_ARM64_CPU_SUSPEND

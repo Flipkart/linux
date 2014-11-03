@@ -118,6 +118,9 @@ struct kvm_vcpu_arch {
 	/* Timer state */
 	struct arch_timer_cpu timer_cpu;
 
+	/* PMU flags */
+	u64 pmu_flags;
+
 	/* PMU state */
 	struct pmu_cpu pmu_cpu;
 

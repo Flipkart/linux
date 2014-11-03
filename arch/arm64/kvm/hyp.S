@@ -439,6 +439,9 @@
 	and	x5, x4, #~(ARMV8_PMCR_E)// Clear PMCR_EL0.E
 	msr	pmcr_el0, x5		// This will stop all counters
 
+	ldr	x5, [x0, #VCPU_PMU_FLAGS] // Only save if dirty flag set
+	tbz	x5, #KVM_ARM64_PMU_DIRTY_SHIFT, 1f
+
 	mov	x3, #0
 	ubfx	x4, x4, #ARMV8_PMCR_N_SHIFT, #5	// Number of event counters
 	cmp	x4, #0			// Skip if no event counters
@@ -727,7 +730,7 @@
 	msr	mdccint_el1, x21
 .endm
 
-.macro restore_pmu
+.macro restore_pmu, is_vcpu_pmu
 	// x2: base address for cpu context
 	// x3: mask of counters allowed in EL0 & EL1
 	// x4: number of event counters allowed in EL0 & EL1
@@ -737,16 +740,19 @@
 	cmp	x5, #1			// Must be PMUv3 else skip
 	bne	1f
 
+	ldr	x5, [x0, #VCPU_PMU_FLAGS] // Only restore if dirty flag set
+	tbz	x5, #KVM_ARM64_PMU_DIRTY_SHIFT, 2f
+
 	mov	x3, #0
 	mrs	x4, pmcr_el0
 	ubfx	x4, x4, #ARMV8_PMCR_N_SHIFT, #5	// Number of event counters
 	cmp	x4, #0			// Skip if no event counters
-	beq	2f
+	beq	3f
 	sub	x4, x4, #1		// Last event counter is reserved
 	mov	x3, #1
 	lsl	x3, x3, x4
 	sub	x3, x3, #1
-2:	orr	x3, x3, #(1 << 31)	// Mask of event counters
+3:	orr	x3, x3, #(1 << 31)	// Mask of event counters
 
 	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMCCFILTR_EL0)]
 	msr	pmccfiltr_el0, x5	// Restore PMCCFILTR_EL0
@@ -768,15 +774,15 @@
 	lsl	x5, x4, #4
 	add	x5, x5, #CPU_SYSREG_OFFSET(PMEVCNTR0_EL0)
 	add	x5, x2, x5
-3:	cmp	x4, #0
-	beq	4f
+4:	cmp	x4, #0
+	beq	5f
 	sub	x4, x4, #1
 	ldp	x6, x7, [x5, #-16]!
 	msr	pmselr_el0, x4
 	msr	pmxevcntr_el0, x6	// Restore PMEVCNTR<n>_EL0
 	msr	pmxevtyper_el0, x7	// Restore PMEVTYPER<n>_EL0
-	b	3b
-4:
+	b	4b
+5:
 	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMSELR_EL0)]
 	msr	pmselr_el0, x5		// Restore PMSELR_EL0
 
@@ -788,6 +794,13 @@
 	and	x5, x5, x3
 	msr	pmovsset_el0, x5	// Restore PMOVSSET_EL0
 
+	.if \is_vcpu_pmu == 0
+	// Clear the dirty flag for the next run, as all the state has
+	// already been saved. Note that we nuke the whole 64bit word.
+	// If we ever add more flags, we'll have to be more careful...
+	str	xzr, [x0, #VCPU_PMU_FLAGS]
+	.endif
+2:
 	ldr	x5, [x2, #CPU_SYSREG_OFFSET(PMCR_EL0)]
 	msr	pmcr_el0, x5		// Restore PMCR_EL0
 1:
@@ -832,6 +845,23 @@
 	// trapped
 	skip_debug_state x25, \target
 9999:
+.endm
+
+.macro compute_pmu_state
+	// Compute pmu state: If PMCR_EL0.E is set then
+	// we do full save/restore cycle and disable trapping
+	add	x25, x0, #VCPU_CONTEXT
+
+	// Check the state of PMCR_EL0.E bit
+	ldr	x26, [x25, #CPU_SYSREG_OFFSET(PMCR_EL0)]
+	and	x26, x26, #ARMV8_PMCR_E
+	cmp	x26, #0
+	b.eq	8887f
+
+	// If any interesting bits was set, we must set the flag
+	mov	x26, #KVM_ARM64_PMU_DIRTY
+	str	x26, [x0, #VCPU_PMU_FLAGS]
+8887:
 .endm
 
 .macro save_guest_32bit_state
@@ -912,6 +942,12 @@
 	orr	x2, x2, #MDCR_EL2_TPMCR
 	orr	x2, x2, #(MDCR_EL2_TDRA | MDCR_EL2_TDOSA)
 
+	// Check for KVM_ARM64_PMU_DIRTY, and set PMU to trap
+	// all PMU registers if PMU not dirty.
+	ldr	x3, [x0, #VCPU_PMU_FLAGS]
+	tbnz	x3, #KVM_ARM64_PMU_DIRTY_SHIFT, 1f
+	orr	x2, x2, #MDCR_EL2_TPM
+1:
 	// Check for KVM_ARM64_DEBUG_DIRTY, and set debug to trap
 	// if not dirty.
 	ldr	x3, [x0, #VCPU_DEBUG_FLAGS]
@@ -1053,8 +1089,12 @@ __save_pmu_guest:
 	save_pmu 1
 	ret
 
-__restore_pmu:
-	restore_pmu
+__restore_pmu_host:
+	restore_pmu 0
+	ret
+
+__restore_pmu_guest:
+	restore_pmu 1
 	ret
 
 __save_fpsimd:
@@ -1086,6 +1126,7 @@ ENTRY(__kvm_vcpu_run)
 
 	save_host_regs
 
+	compute_pmu_state
 	bl __save_pmu_host
 
 	bl __save_fpsimd
@@ -1111,7 +1152,7 @@ ENTRY(__kvm_vcpu_run)
 1:
 	restore_guest_32bit_state
 
-	bl __restore_pmu
+	bl __restore_pmu_guest
 
 	restore_guest_regs
 
@@ -1158,7 +1199,7 @@ __kvm_vcpu_return:
 	str	xzr, [x0, #VCPU_DEBUG_FLAGS]
 	bl	__restore_debug
 1:
-	bl __restore_pmu
+	bl __restore_pmu_host
 
 	restore_host_regs
 
