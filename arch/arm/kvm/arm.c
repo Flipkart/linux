@@ -129,6 +129,8 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 
 	kvm_timer_init(kvm);
 
+	kvm_pmu_init(kvm);
+
 	/* Mark the initial VMID generation invalid */
 	kvm->arch.vmid_gen = 0;
 
@@ -512,6 +514,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		if (ret <= 0 || need_new_vmid_gen(vcpu->kvm)) {
 			local_irq_enable();
 			kvm_timer_sync_hwstate(vcpu);
+			kvm_pmu_sync_hwstate(vcpu);
 			kvm_vgic_sync_hwstate(vcpu);
 			continue;
 		}
@@ -546,6 +549,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		 *************************************************************/
 
 		kvm_timer_sync_hwstate(vcpu);
+		kvm_pmu_sync_hwstate(vcpu);
 		kvm_vgic_sync_hwstate(vcpu);
 
 		ret = handle_exit(vcpu, run, ret);
@@ -739,6 +743,8 @@ static int kvm_vm_ioctl_set_device_addr(struct kvm *kvm,
 		if (!vgic_present)
 			return -ENXIO;
 		return kvm_vgic_addr(kvm, type, &dev_addr->addr, true);
+	case KVM_ARM_DEVICE_PMU:
+		return kvm_pmu_addr(kvm, type, &dev_addr->addr, true);
 	default:
 		return -ENODEV;
 	}

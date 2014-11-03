@@ -26,6 +26,7 @@
 #include <asm/kvm_mmio.h>
 #include <asm/fpstate.h>
 #include <kvm/arm_arch_timer.h>
+#include <kvm/arm_pmu.h>
 
 #if defined(CONFIG_KVM_ARM_MAX_VCPUS)
 #define KVM_MAX_VCPUS CONFIG_KVM_ARM_MAX_VCPUS
@@ -53,6 +54,9 @@ struct kvm_arch {
 
 	/* Timer */
 	struct arch_timer_kvm	timer;
+
+	/* PMU */
+	struct pmu_kvm		pmu;
 
 	/*
 	 * Anything that is not used directly from assembly code goes
@@ -119,7 +123,12 @@ struct kvm_vcpu_arch {
 
 	/* VGIC state */
 	struct vgic_cpu vgic_cpu;
+
+	/* Timer state */
 	struct arch_timer_cpu timer_cpu;
+
+	/* PMU state */
+	struct pmu_cpu pmu_cpu;
 
 	/*
 	 * Anything that is not used directly from assembly code goes

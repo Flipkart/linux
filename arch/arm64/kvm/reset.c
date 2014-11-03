@@ -24,6 +24,7 @@
 #include <linux/kvm.h>
 
 #include <kvm/arm_arch_timer.h>
+#include <kvm/arm_pmu.h>
 
 #include <asm/cputype.h>
 #include <asm/ptrace.h>
@@ -107,6 +108,9 @@ int kvm_reset_vcpu(struct kvm_vcpu *vcpu)
 
 	/* Reset timer */
 	kvm_timer_vcpu_reset(vcpu, cpu_vtimer_irq);
+
+	/* Reset pmu context */
+	kvm_pmu_vcpu_reset(vcpu);
 
 	return 0;
 }
