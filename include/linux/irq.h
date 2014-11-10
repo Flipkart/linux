@@ -188,7 +188,23 @@ enum {
 	IRQD_IRQ_MASKED			= (1 << 17),
 	IRQD_IRQ_INPROGRESS		= (1 << 18),
 	IRQD_WAKEUP_ARMED		= (1 << 19),
+	IRQD_IRQ_FORWARDED		= (1 << 20),
 };
+
+static inline void irqd_set_irq_forwarded(struct irq_data *d)
+{
+	d->state_use_accessors |= IRQD_IRQ_FORWARDED;
+}
+
+static inline void irqd_clr_irq_forwarded(struct irq_data *d)
+{
+	d->state_use_accessors &= ~IRQD_IRQ_FORWARDED;
+}
+
+static inline bool irqd_irq_forwarded(struct irq_data *d)
+{
+	return d->state_use_accessors & IRQD_IRQ_FORWARDED;
+}
 
 static inline bool irqd_is_setaffinity_pending(struct irq_data *d)
 {
