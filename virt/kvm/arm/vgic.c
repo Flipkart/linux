@@ -24,6 +24,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/rbtree.h>
 #include <linux/uaccess.h>
 
 #include <linux/irqchip/arm-gic.h>
@@ -1708,6 +1709,93 @@ static irqreturn_t vgic_maintenance_handler(int irq, void *data)
 	 * interrupts on the exit path (see vgic_process_maintenance).
 	 */
 	return IRQ_HANDLED;
+}
+
+static struct rb_root *vgic_get_irq_phys_map(struct kvm_vcpu *vcpu,
+					     int virt_irq)
+{
+	if (virt_irq < VGIC_NR_PRIVATE_IRQS)
+		return &vcpu->arch.vgic_cpu.irq_phys_map;
+	else
+		return &vcpu->kvm->arch.vgic.irq_phys_map;
+}
+
+int vgic_map_phys_irq(struct kvm_vcpu *vcpu, int virt_irq, int phys_irq)
+{
+	struct rb_root *root = vgic_get_irq_phys_map(vcpu, virt_irq);
+	struct rb_node **new = &root->rb_node, *parent = NULL;
+	struct irq_phys_map *new_map;
+
+	/* Boilerplate rb_tree code */
+	while (*new) {
+		struct irq_phys_map *this;
+
+		this = container_of(*new, struct irq_phys_map, node);
+		parent = *new;
+		if (this->virt_irq < virt_irq)
+			new = &(*new)->rb_left;
+		else if (this->virt_irq > virt_irq)
+			new = &(*new)->rb_right;
+		else
+			return -EEXIST;
+	}
+
+	new_map = kzalloc(sizeof(*new_map), GFP_KERNEL);
+	if (!new_map)
+		return -ENOMEM;
+
+	new_map->virt_irq = virt_irq;
+	new_map->phys_irq = phys_irq;
+
+	rb_link_node(&new_map->node, parent, new);
+	rb_insert_color(&new_map->node, root);
+
+	return 0;
+}
+
+static struct irq_phys_map *vgic_irq_map_search(struct kvm_vcpu *vcpu,
+						int virt_irq)
+{
+	struct rb_root *root = vgic_get_irq_phys_map(vcpu, virt_irq);
+	struct rb_node *node = root->rb_node;
+
+	while(node) {
+		struct irq_phys_map *this;
+
+		this = container_of(node, struct irq_phys_map, node);
+
+		if (this->virt_irq < virt_irq)
+			node = node->rb_left;
+		else if (this->virt_irq > virt_irq)
+			node = node->rb_right;
+		else
+			return this;
+	}
+
+	return NULL;
+}
+
+int vgic_get_phys_irq(struct kvm_vcpu *vcpu, int virt_irq)
+{
+	struct irq_phys_map *map = vgic_irq_map_search(vcpu, virt_irq);
+
+	if (map)
+	return map->phys_irq;
+
+	return -ENOENT;
+}
+
+int vgic_unmap_phys_irq(struct kvm_vcpu *vcpu, int virt_irq, int phys_irq)
+{
+	struct irq_phys_map *map = vgic_irq_map_search(vcpu, virt_irq);
+
+	if (map && map->phys_irq == phys_irq) {
+		rb_erase(&map->node, vgic_get_irq_phys_map(vcpu, virt_irq));
+		kfree(map);
+		return 0;
+	}
+
+	return -ENOENT;
 }
 
 void kvm_vgic_vcpu_destroy(struct kvm_vcpu *vcpu)

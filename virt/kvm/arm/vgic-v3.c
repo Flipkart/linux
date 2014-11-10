@@ -78,6 +78,15 @@ static void vgic_v3_set_lr(struct kvm_vcpu *vcpu, int lr,
 	if (lr_desc.state & LR_EOI_INT)
 		lr_val |= ICH_LR_EOI;
 
+	if (lr_desc.irq >= VGIC_NR_SGIS) {
+		int phys_irq;
+		phys_irq = vgic_get_phys_irq(vcpu, lr_desc.irq);
+		if (phys_irq >= 0) {
+			lr_val |= ((u64)phys_irq) << ICH_LR_PHYS_ID_SHIFT;
+			lr_val |= ICH_LR_HW;
+		}
+	}
+
 	vcpu->arch.vgic_cpu.vgic_v3.vgic_lr[LR_INDEX(lr)] = lr_val;
 }
 
