@@ -1756,3 +1756,83 @@ int request_percpu_irq(unsigned int irq, irq_handler_t handler,
 
 	return retval;
 }
+
+/**
+ *	irq_get_fwd_state - return the state of a forwarded interrupt.
+ *	@irq: Interrupt line that is forwarded to a VM
+ *	@val: Pointer where the state is being stored
+ *	@mask: Bitmask of IRQ_FWD_STATE_* the caller wants to know about
+ *
+ *	This call snapshots the state of a forwarded interrupt,
+ *	depending on the mask which indicates the requested bits.
+ *
+ *	This function should be called with preemption disabled if the
+ *	interrupt controller has per-cpu registers.
+ */
+int irq_get_fwd_state(unsigned int irq, u32 *val, u32 mask)
+{
+	struct irq_desc *desc;
+	struct irq_data *data;
+	struct irq_chip *chip;
+	unsigned long flags;
+
+	desc = irq_to_desc(irq);
+	if (!desc)
+		return -EINVAL;
+
+	data = irq_desc_get_irq_data(desc);
+	if (!irqd_irq_forwarded(data))
+		return -EINVAL;
+
+	chip = irq_desc_get_chip(desc);
+	if (!chip->irq_get_fwd_state)
+		return -EINVAL;
+
+	chip_bus_lock(desc);
+	raw_spin_lock_irqsave(&desc->lock, flags);
+	*val = chip->irq_get_fwd_state(data, mask);
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
+	chip_bus_sync_unlock(desc);
+
+	return 0;
+}
+
+/**
+ *	irq_set_fwd_state - set the state of a forwarded interrupt.
+ *	@irq: Interrupt line that is forwarded to a VM
+ *	@val: State to be restored
+ *	@mask: Bitmask of IRQ_FWD_STATE_* defining the valid bits in @val
+ *
+ *	This call sets the state of a forwarded interrupt, depending
+ *	on the mask which indicates the valid bits.
+ *
+ *	This function should be called with preemption disabled if the
+ *	interrupt controller has per-cpu registers.
+ */
+int irq_set_fwd_state(unsigned int irq, u32 val, u32 mask)
+{
+	struct irq_desc *desc;
+	struct irq_data *data;
+	struct irq_chip *chip;
+	unsigned long flags;
+
+	desc = irq_to_desc(irq);
+	if (!desc)
+		return -EINVAL;
+
+	data = irq_desc_get_irq_data(desc);
+	if (!irqd_irq_forwarded(data))
+		return -EINVAL;
+
+	chip = irq_desc_get_chip(desc);
+	if (!chip->irq_set_fwd_state)
+		return -EINVAL;
+
+	chip_bus_lock(desc);
+	raw_spin_lock_irqsave(&desc->lock, flags);
+	chip->irq_set_fwd_state(data, val, mask);
+	raw_spin_unlock_irqrestore(&desc->lock, flags);
+	chip_bus_sync_unlock(desc);
+
+	return 0;
+}

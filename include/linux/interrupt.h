@@ -356,6 +356,8 @@ static inline int disable_irq_wake(unsigned int irq)
 	return irq_set_irq_wake(irq, 0);
 }
 
+extern int irq_get_fwd_state(unsigned int irq, u32 *val, u32 mask);
+extern int irq_set_fwd_state(unsigned int irq, u32 val, u32 mask);
 
 #ifdef CONFIG_IRQ_FORCED_THREADING
 extern bool force_irqthreads;
