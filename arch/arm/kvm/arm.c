@@ -497,9 +497,9 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 			vcpu_pause(vcpu);
 
 		kvm_vgic_flush_hwstate(vcpu);
-		kvm_timer_flush_hwstate(vcpu);
 
 		local_irq_disable();
+		kvm_timer_flush_hwstate(vcpu);
 
 		/*
 		 * Re-check atomic conditions
@@ -510,8 +510,8 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		}
 
 		if (ret <= 0 || need_new_vmid_gen(vcpu->kvm)) {
-			local_irq_enable();
 			kvm_timer_sync_hwstate(vcpu);
+			local_irq_enable();
 			kvm_vgic_sync_hwstate(vcpu);
 			continue;
 		}
@@ -529,6 +529,8 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		vcpu->arch.last_pcpu = smp_processor_id();
 		kvm_guest_exit();
 		trace_kvm_exit(*vcpu_pc(vcpu));
+		kvm_timer_sync_hwstate(vcpu);
+
 		/*
 		 * We may have taken a host interrupt in HYP mode (ie
 		 * while executing the guest). This interrupt is still
@@ -545,7 +547,6 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		 * Back from guest
 		 *************************************************************/
 
-		kvm_timer_sync_hwstate(vcpu);
 		kvm_vgic_sync_hwstate(vcpu);
 
 		ret = handle_exit(vcpu, run, ret);
