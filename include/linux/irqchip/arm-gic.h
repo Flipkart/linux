@@ -21,6 +21,10 @@
 #define GIC_CPU_ACTIVEPRIO		0xd0
 #define GIC_CPU_IDENT			0xfc
 
+#define GIC_CPU_DEACTIVATE		0x1000
+
+#define GIC_CPU_CTRL_EOImodeNS		(1 << 9)
+
 #define GICC_ENABLE			0x1
 #define GICC_INT_PRI_THRESHOLD		0xf0
 #define GICC_IAR_INT_ID_MASK		0x3ff
