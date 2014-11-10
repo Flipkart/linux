@@ -156,12 +156,22 @@ static inline unsigned int gic_irq(struct irq_data *d)
 /*
  * Routines to acknowledge, disable and enable interrupts
  */
-static void gic_mask_irq(struct irq_data *d)
+static void gic_poke_irq(struct irq_data *d, u32 offset)
 {
 	u32 mask = 1 << (gic_irq(d) % 32);
+	writel_relaxed(mask, gic_dist_base(d) + offset + (gic_irq(d) / 32) * 4);
+}
 
+static int gic_peek_irq(struct irq_data *d, u32 offset)
+{
+	u32 mask = 1 << (gic_irq(d) % 32);
+	return !!(readl_relaxed(gic_dist_base(d) + offset + (gic_irq(d) / 32) * 4) & mask);
+}
+
+static void gic_mask_irq(struct irq_data *d)
+{
 	raw_spin_lock(&irq_controller_lock);
-	writel_relaxed(mask, gic_dist_base(d) + GIC_DIST_ENABLE_CLEAR + (gic_irq(d) / 32) * 4);
+	gic_poke_irq(d, GIC_DIST_ENABLE_CLEAR);
 	if (gic_arch_extn.irq_mask)
 		gic_arch_extn.irq_mask(d);
 	raw_spin_unlock(&irq_controller_lock);
@@ -169,12 +179,10 @@ static void gic_mask_irq(struct irq_data *d)
 
 static void gic_unmask_irq(struct irq_data *d)
 {
-	u32 mask = 1 << (gic_irq(d) % 32);
-
 	raw_spin_lock(&irq_controller_lock);
 	if (gic_arch_extn.irq_unmask)
 		gic_arch_extn.irq_unmask(d);
-	writel_relaxed(mask, gic_dist_base(d) + GIC_DIST_ENABLE_SET + (gic_irq(d) / 32) * 4);
+	gic_poke_irq(d, GIC_DIST_ENABLE_SET);
 	raw_spin_unlock(&irq_controller_lock);
 }
 
@@ -192,7 +200,33 @@ static void gic_eoi_irq(struct irq_data *d)
 static void gic_eoi_dir_irq(struct irq_data *d)
 {
 	gic_eoi_irq(d);
-	writel_relaxed(gic_irq(d), gic_cpu_base(d) + GIC_CPU_DEACTIVATE);
+	if (!irqd_irq_forwarded(d))
+		writel_relaxed(gic_irq(d), gic_cpu_base(d) + GIC_CPU_DEACTIVATE);
+}
+
+static void gic_irq_set_fwd_state(struct irq_data *d, u32 val, u32 mask)
+{
+	if (mask & IRQ_FWD_STATE_PENDING)
+		gic_poke_irq(d, (val & IRQ_FWD_STATE_PENDING) ? GIC_DIST_ENABLE_SET : GIC_DIST_ENABLE_CLEAR);
+	if (mask & IRQ_FWD_STATE_ACTIVE)
+		gic_poke_irq(d, (val & IRQ_FWD_STATE_ACTIVE) ? GIC_DIST_ACTIVE_SET : GIC_DIST_ACTIVE_CLEAR);
+	if (mask & IRQ_FWD_STATE_MASKED)
+		gic_poke_irq(d, (val & IRQ_FWD_STATE_MASKED) ? GIC_DIST_ENABLE_CLEAR : GIC_DIST_ENABLE_SET);
+
+}
+
+static u32 gic_irq_get_fwd_state(struct irq_data *d, u32 mask)
+{
+	u32 val = 0;
+
+	if (mask & IRQ_FWD_STATE_PENDING && gic_peek_irq(d, GIC_DIST_ENABLE_SET))
+		val |= IRQ_FWD_STATE_PENDING;
+	if (mask & IRQ_FWD_STATE_ACTIVE && gic_peek_irq(d, GIC_DIST_ACTIVE_SET))
+		val |= IRQ_FWD_STATE_ACTIVE;
+	if (mask & IRQ_FWD_STATE_MASKED && !gic_peek_irq(d, GIC_DIST_ENABLE_SET))
+		val |= IRQ_FWD_STATE_MASKED;
+
+	return val;
 }
 
 static int gic_set_type(struct irq_data *d, unsigned int type)
@@ -347,6 +381,8 @@ static struct irq_chip gicv2_chip = {
 	.irq_set_affinity	= gic_set_affinity,
 #endif
 	.irq_set_wake		= gic_set_wake,
+	.irq_get_fwd_state	= gic_irq_get_fwd_state,
+	.irq_set_fwd_state	= gic_irq_set_fwd_state,
 };
 
 void __init gic_cascade_irq(unsigned int gic_nr, unsigned int irq)
