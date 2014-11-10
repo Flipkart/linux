@@ -520,6 +520,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		 * Enter the guest
 		 */
 		trace_kvm_entry(*vcpu_pc(vcpu));
+		local_irq_disable();
 		kvm_guest_enter();
 		vcpu->mode = IN_GUEST_MODE;
 
