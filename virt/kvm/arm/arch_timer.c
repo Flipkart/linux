@@ -63,7 +63,7 @@ static void kvm_timer_inject_irq(struct kvm_vcpu *vcpu)
 {
 	struct arch_timer_cpu *timer = &vcpu->arch.timer_cpu;
 
-	timer->cntv_ctl |= ARCH_TIMER_CTRL_IT_MASK;
+	timer->irq_active = IRQ_FWD_STATE_ACTIVE;
 	kvm_vgic_inject_irq(vcpu->kvm, vcpu->vcpu_id,
 			    timer->irq->irq,
 			    timer->irq->level);
@@ -117,6 +117,16 @@ void kvm_timer_flush_hwstate(struct kvm_vcpu *vcpu)
 	 * populate the CPU timer again.
 	 */
 	timer_disarm(timer);
+
+	if (timer->irq_active) {
+		int ret;
+
+		ret = irq_set_fwd_state(host_vtimer_irq,
+					timer->irq_active,
+					IRQ_FWD_STATE_ACTIVE);
+		if (ret)
+			kvm_err("unable to restore timer state");
+	}
 }
 
 /**
@@ -130,7 +140,15 @@ void kvm_timer_sync_hwstate(struct kvm_vcpu *vcpu)
 {
 	struct arch_timer_cpu *timer = &vcpu->arch.timer_cpu;
 	cycle_t cval, now;
+	int ret;
 	u64 ns;
+
+	ret = irq_get_fwd_state(host_vtimer_irq, &timer->irq_active,
+				IRQ_FWD_STATE_ACTIVE);
+	if (ret)
+		kvm_err("unable to retrieve timer state");
+	if (timer->irq_active)
+		irq_set_fwd_state(host_vtimer_irq, 0, IRQ_FWD_STATE_ACTIVE);
 
 	if ((timer->cntv_ctl & ARCH_TIMER_CTRL_IT_MASK) ||
 		!(timer->cntv_ctl & ARCH_TIMER_CTRL_ENABLE))
@@ -166,6 +184,12 @@ void kvm_timer_vcpu_reset(struct kvm_vcpu *vcpu,
 	 * vcpu timer irq number when the vcpu is reset.
 	 */
 	timer->irq = irq;
+
+	/*
+	 * Tell the VGIC that the virtual interrupt is tied to a
+	 * physical interrupt. We do that once per VCPU.
+	 */
+	vgic_map_phys_irq(vcpu, irq->irq, host_vtimer_irq);
 }
 
 void kvm_timer_vcpu_init(struct kvm_vcpu *vcpu)
@@ -290,6 +314,10 @@ int kvm_timer_hyp_init(void)
 	}
 
 	kvm_info("%s IRQ%d\n", np->name, ppi);
+
+	/* Tell the GIC we're forwarding the interrupt to a guest */
+	irqd_set_irq_forwarded(irq_get_irq_data(host_vtimer_irq));
+
 	on_each_cpu(kvm_timer_init_interrupt, NULL, 1);
 
 	goto out;
@@ -305,6 +333,7 @@ void kvm_timer_vcpu_terminate(struct kvm_vcpu *vcpu)
 	struct arch_timer_cpu *timer = &vcpu->arch.timer_cpu;
 
 	timer_disarm(timer);
+	vgic_unmap_phys_irq(vcpu, timer->irq->irq, host_vtimer_irq);
 }
 
 int kvm_timer_init(struct kvm *kvm)
