@@ -68,4 +68,12 @@ config KVM_ARM_TIMER
 	---help---
 	  Adds support for the Architected Timers in virtual machines
 
+config KVM_ARM_PMU
+	bool "KVM support for Performance Monitoring"
+	depends on KVM_ARM_VGIC
+	select HAVE_KVM_IRQCHIP
+	default y
+	---help---
+	  Adds support for the Performance Monitoring in virtual machines.
+
 endif # VIRTUALIZATION

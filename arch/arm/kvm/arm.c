@@ -129,6 +129,8 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 
 	kvm_timer_init(kvm);
 
+	kvm_pmu_init(kvm);
+
 	/* Mark the initial VMID generation invalid */
 	kvm->arch.vmid_gen = 0;
 
@@ -500,6 +502,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 
 		local_irq_disable();
 		kvm_timer_flush_hwstate(vcpu);
+		kvm_pmu_switch_host2guest(vcpu);
 
 		/*
 		 * Re-check atomic conditions
@@ -511,6 +514,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 
 		if (ret <= 0 || need_new_vmid_gen(vcpu->kvm)) {
 			kvm_timer_sync_hwstate(vcpu);
+			kvm_pmu_switch_guest2host(vcpu);
 			local_irq_enable();
 			kvm_vgic_sync_hwstate(vcpu);
 			continue;
@@ -531,6 +535,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		kvm_guest_exit();
 		trace_kvm_exit(*vcpu_pc(vcpu));
 		kvm_timer_sync_hwstate(vcpu);
+		kvm_pmu_switch_guest2host(vcpu);
 
 		/*
 		 * We may have taken a host interrupt in HYP mode (ie
@@ -741,6 +746,8 @@ static int kvm_vm_ioctl_set_device_addr(struct kvm *kvm,
 		if (!vgic_present)
 			return -ENXIO;
 		return kvm_vgic_addr(kvm, type, &dev_addr->addr, true);
+	case KVM_ARM_DEVICE_PMU:
+		return kvm_pmu_addr(kvm, type, &dev_addr->addr, true);
 	default:
 		return -ENODEV;
 	}
@@ -950,6 +957,13 @@ static int init_hyp_mode(void)
 	 * Init HYP architected timer support
 	 */
 	err = kvm_timer_hyp_init();
+	if (err)
+		goto out_free_mappings;
+
+	/*
+	 * Init HYP PMU support
+	 */
+	err = kvm_pmu_hyp_init();
 	if (err)
 		goto out_free_mappings;
 

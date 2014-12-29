@@ -70,6 +70,7 @@ struct kvm_regs {
 
 /* Supported device IDs */
 #define KVM_ARM_DEVICE_VGIC_V2		0
+#define KVM_ARM_DEVICE_PMU		1
 
 /* Supported VGIC address types  */
 #define KVM_VGIC_V2_ADDR_TYPE_DIST	0

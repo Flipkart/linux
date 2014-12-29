@@ -98,6 +98,9 @@ extern void __kvm_flush_vm_context(void);
 extern void __kvm_tlb_flush_vmid_ipa(struct kvm *kvm, phys_addr_t ipa);
 
 extern int __kvm_vcpu_run(struct kvm_vcpu *vcpu);
+
+static inline void __kvm_pmu_switch_host2guest(struct kvm_vcpu *vcpu) {}
+static inline void __kvm_pmu_switch_guest2host(struct kvm_vcpu *vcpu) {}
 #endif
 
 #endif /* __ARM_KVM_ASM_H__ */
