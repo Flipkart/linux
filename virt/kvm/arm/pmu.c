@@ -23,11 +23,13 @@
 #include <linux/cpumask.h>
 #include <linux/percpu.h>
 #include <linux/interrupt.h>
+#include <asm/kvm_emulate.h>
 
 #include <kvm/arm_vgic.h>
 #include <kvm/arm_pmu.h>
 
 static DEFINE_PER_CPU(int, host_pmu_irq);
+static DEFINE_PER_CPU(int, host_pmu_irq_disabled);
 
 /**
  * kvm_pmu_switch_host2guest - switch PMU context from host to guest
@@ -36,21 +38,24 @@ static DEFINE_PER_CPU(int, host_pmu_irq);
 void kvm_pmu_switch_host2guest(struct kvm_vcpu *vcpu)
 {
 	int hpmu_irq = per_cpu(host_pmu_irq, vcpu->cpu);
-	struct pmu_cpu *pmu = &vcpu->arch.pmu_cpu;
 	struct pmu_kvm *kpmu = &vcpu->kvm->arch.pmu;
 
+	/* Skip if PMU irq not available for current host CPU */
+	if (hpmu_irq < 0)
+		return;
+
+	/* Disable PMU irq to avoid infinite VM exits due to host PMU irq */
+	per_cpu(host_pmu_irq_disabled, vcpu->cpu) =
+			irqd_irq_disabled(irq_get_irq_data(hpmu_irq));
+	if (!per_cpu(host_pmu_irq_disabled, vcpu->cpu)) {
+		disable_irq(hpmu_irq);
+	}
+
 	/* Inject virtual irq if host PMU irq active */
-	if (pmu->irq_active) {
+	if (kvm_pmu_overflowed(vcpu)) {
 		kvm_vgic_inject_irq(vcpu->kvm, vcpu->vcpu_id,
 				    kpmu->irq_num[vcpu->vcpu_id],
 				    1);
-
-		/* Mark host PMU irq active so that we don't
-		 * infinitely loop in injecting virtual irq
-		 */
-		irqd_set_irq_forwarded(irq_get_irq_data(hpmu_irq));
-		irq_set_fwd_state(hpmu_irq, 1, IRQ_FWD_STATE_ACTIVE);
-		irqd_clr_irq_forwarded(irq_get_irq_data(hpmu_irq));
 	}
 
 	/* Switch PMU context from host to guest */
@@ -63,37 +68,19 @@ void kvm_pmu_switch_host2guest(struct kvm_vcpu *vcpu)
  */
 void kvm_pmu_switch_guest2host(struct kvm_vcpu *vcpu)
 {
-	int ret;
 	int hpmu_irq = per_cpu(host_pmu_irq, vcpu->cpu);
-	struct pmu_cpu *pmu = &vcpu->arch.pmu_cpu;
-
-	/* Switch PMU context from guest to host */
-	__kvm_pmu_switch_guest2host(vcpu);
 
 	/* Skip if PMU irq not available for current host CPU */
 	if (hpmu_irq < 0)
 		return;
 
-	/* Fetch & clear state of host PMU irq */
-	irqd_set_irq_forwarded(irq_get_irq_data(hpmu_irq));
-	ret = irq_get_fwd_state(hpmu_irq, &pmu->irq_active,
-				IRQ_FWD_STATE_ACTIVE);
-	if (ret)
-		kvm_err("unable to retrieve pmu irq state");
-	if (pmu->irq_active)
-		irq_set_fwd_state(hpmu_irq, 0, IRQ_FWD_STATE_ACTIVE);
-	irqd_clr_irq_forwarded(irq_get_irq_data(hpmu_irq));
-}
+	/* Switch PMU context from guest to host */
+	__kvm_pmu_switch_guest2host(vcpu);
 
-/**
- * kvm_pmu_vcpu_reset - reset pmu state for cpu
- * @vcpu: The vcpu pointer
- */
-void kvm_pmu_vcpu_reset(struct kvm_vcpu *vcpu)
-{
-	struct pmu_cpu *pmu = &vcpu->arch.pmu_cpu;
-
-	pmu->irq_active = 0;
+	/* Re-enable PMU irq if it was enabled previously */
+	if (!per_cpu(host_pmu_irq_disabled, vcpu->cpu)) {
+		enable_irq(hpmu_irq);
+	}
 }
 
 /**
@@ -157,8 +144,10 @@ int kvm_pmu_hyp_init(void)
 	struct device_node *np;
 
 	/* Ensure that PMU irq for each possible cpu is invalid */
-	for_each_possible_cpu(cpu)
+	for_each_possible_cpu(cpu) {
 		per_cpu(host_pmu_irq, cpu) = -1;
+		per_cpu(host_pmu_irq_disabled, cpu) = 1;
+	}
 
 	/* Find PMU device node */
 	np = of_find_matching_node(NULL, pmu_of_match);

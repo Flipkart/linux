@@ -118,9 +118,6 @@ struct kvm_vcpu_arch {
 	/* Timer state */
 	struct arch_timer_cpu timer_cpu;
 
-	/* PMU state */
-	struct pmu_cpu pmu_cpu;
-
 	/*
 	 * Anything that is not used directly from assembly code goes
 	 * here.

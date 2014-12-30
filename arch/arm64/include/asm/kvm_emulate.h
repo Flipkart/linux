@@ -187,6 +187,11 @@ static inline unsigned long kvm_vcpu_get_mpidr(struct kvm_vcpu *vcpu)
 	return vcpu_sys_reg(vcpu, MPIDR_EL1);
 }
 
+static inline bool kvm_pmu_overflowed(struct kvm_vcpu *vcpu)
+{
+	return !!vcpu_sys_reg(vcpu, PMOVSSET_EL0);
+}
+
 static inline void kvm_vcpu_set_be(struct kvm_vcpu *vcpu)
 {
 	if (vcpu_mode_is_32bit(vcpu))

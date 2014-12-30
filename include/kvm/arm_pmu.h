@@ -26,22 +26,13 @@ struct pmu_kvm {
 #endif
 };
 
-struct pmu_cpu {
 #ifdef CONFIG_KVM_ARM_PMU
-	/* Is interrupt active at the distributor level */
-	u32			irq_active;
-#endif
-};
-
-#ifdef CONFIG_KVM_ARM_PMU
-void kvm_pmu_vcpu_reset(struct kvm_vcpu *vcpu);
 void kvm_pmu_switch_host2guest(struct kvm_vcpu *vcpu);
 void kvm_pmu_switch_guest2host(struct kvm_vcpu *vcpu);
 int kvm_pmu_addr(struct kvm *kvm, unsigned long cpu, u64 *irq, bool write);
 int kvm_pmu_init(struct kvm *kvm);
 int kvm_pmu_hyp_init(void);
 #else
-static inline void kvm_pmu_vcpu_reset(struct kvm_vcpu *vcpu) {}
 static void kvm_pmu_switch_host2guest(struct kvm_vcpu *vcpu) {}
 static void kvm_pmu_switch_guest2host(struct kvm_vcpu *vcpu) {}
 static inline int kvm_pmu_addr(struct kvm *kvm,

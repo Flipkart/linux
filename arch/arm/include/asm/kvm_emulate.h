@@ -167,6 +167,12 @@ static inline unsigned long kvm_vcpu_get_mpidr(struct kvm_vcpu *vcpu)
 	return vcpu->arch.cp15[c0_MPIDR];
 }
 
+static inline bool kvm_pmu_overflowed(struct kvm_vcpu *vcpu)
+{
+	/* FIXME: */
+	return 0;
+}
+
 static inline void kvm_vcpu_set_be(struct kvm_vcpu *vcpu)
 {
 	*vcpu_cpsr(vcpu) |= PSR_E_BIT;
